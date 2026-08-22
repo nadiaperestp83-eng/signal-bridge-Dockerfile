@@ -1,6 +1,6 @@
 FROM eclipse-temurin:21-jre-jammy
 
-RUN apt-get update && apt-get install -y wget unzip curl && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y wget tar gzip curl && rm -rf /var/lib/apt/lists/*
 
 ARG SIGNAL_CLI_VERSION=0.13.12
 
@@ -11,6 +11,10 @@ RUN wget "https://github.com/AsamK/signal-cli/releases/download/v${SIGNAL_CLI_VE
 
 RUN mkdir -p /data/signal-cli-config
 
-EXPOSE 8090
+COPY entrypoint.sh /entrypoint.sh
+COPY backup-state.sh /backup-state.sh
+RUN chmod +x /entrypoint.sh /backup-state.sh
 
-CMD ["signal-cli", "--config", "/data/signal-cli-config", "daemon", "--http", "0.0.0.0:8090"]
+EXPOSE 8080
+
+ENTRYPOINT ["/entrypoint.sh"]
