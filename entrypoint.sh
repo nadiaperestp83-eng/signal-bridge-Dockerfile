@@ -5,13 +5,13 @@ CONFIG_DIR="/data/signal-cli-config"
 mkdir -p "$CONFIG_DIR"
 
 if [ -n "$SIGNAL_CLI_STATE_B64" ]; then
-  echo "Restaurando estado do signal-cli a partir da variável de ambiente..."
+  echo "Restaurando estado do signal-cli..."
   echo "$SIGNAL_CLI_STATE_B64" | base64 -d > /tmp/state.tar.gz
   tar xzf /tmp/state.tar.gz -C "$CONFIG_DIR"
   rm /tmp/state.tar.gz
-  echo "Estado restaurado com sucesso."
+  echo "Estado restaurado."
 else
-  echo "SIGNAL_CLI_STATE_B64 vazio — iniciando sem estado prévio (primeiro registro)."
+  echo "Sem estado prévio — contas serão registradas do zero."
 fi
 
-exec signal-cli --config "$CONFIG_DIR" daemon --http 0.0.0.0:${PORT:-8080}
+exec node /app/server.js
