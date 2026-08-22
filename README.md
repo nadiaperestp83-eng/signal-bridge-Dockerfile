@@ -1,2 +1,0 @@
-# signal-bridge-Dockerfile
-Bridge
