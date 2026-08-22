@@ -1,6 +1,9 @@
 FROM eclipse-temurin:21-jre-jammy
 
-RUN apt-get update && apt-get install -y wget tar gzip curl && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y wget tar gzip curl gnupg && \
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+    apt-get install -y nodejs && \
+    rm -rf /var/lib/apt/lists/*
 
 ARG SIGNAL_CLI_VERSION=0.13.12
 
@@ -11,9 +14,12 @@ RUN wget "https://github.com/AsamK/signal-cli/releases/download/v${SIGNAL_CLI_VE
 
 RUN mkdir -p /data/signal-cli-config
 
+WORKDIR /app
+COPY package.json .
+RUN npm install
+COPY server.js .
 COPY entrypoint.sh /entrypoint.sh
-COPY backup-state.sh /backup-state.sh
-RUN chmod +x /entrypoint.sh /backup-state.sh
+RUN chmod +x /entrypoint.sh
 
 EXPOSE 8080
 
