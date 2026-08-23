@@ -24,6 +24,20 @@ function rodarSignalCli(args) {
   });
 }
 
+// GET /status?phone=+numero  -> diz se a conta já está registrada
+app.get('/status', async (req, res) => {
+  const { phone } = req.query;
+  if (!phone) return res.status(400).json({ erro: 'phone é obrigatório' });
+
+  try {
+    const resultado = await rodarSignalCli(['-a', phone, 'listAccounts']);
+    const registrado = (resultado.stdout || '').includes(phone);
+    res.json({ registrado });
+  } catch (e) {
+    res.json({ registrado: false });
+  }
+});
+
 // POST /register  { "phone": "+5511999999999", "captchaToken": "opcional" }
 app.post('/register', async (req, res) => {
   const { phone, captchaToken } = req.body;
@@ -36,10 +50,13 @@ app.post('/register', async (req, res) => {
     const resultado = await rodarSignalCli(args);
     res.json({ sucesso: true, detalhe: resultado.stdout || resultado.stderr });
   } catch (e) {
-    const precisaCaptcha =
-      (e.stderr || '').toLowerCase().includes('captcha');
+    const stderrTexto = (e.stderr || '').toLowerCase();
+    const jaRegistrado = stderrTexto.includes('already registered');
+    const precisaCaptcha = stderrTexto.includes('captcha');
+
     res.status(422).json({
       sucesso: false,
+      jaRegistrado,
       precisaCaptcha,
       captchaUrl: precisaCaptcha
         ? 'https://signalcaptchas.org/registration/generate.html'
