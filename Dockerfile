@@ -5,7 +5,7 @@ RUN apt-get update && apt-get install -y wget tar gzip curl gnupg && \
     apt-get install -y nodejs && \
     rm -rf /var/lib/apt/lists/*
 
-ARG SIGNAL_CLI_VERSION=0.13.12
+ARG SIGNAL_CLI_VERSION=0.14.3
 
 RUN wget "https://github.com/AsamK/signal-cli/releases/download/v${SIGNAL_CLI_VERSION}/signal-cli-${SIGNAL_CLI_VERSION}.tar.gz" \
     && tar xf "signal-cli-${SIGNAL_CLI_VERSION}.tar.gz" -C /opt \
