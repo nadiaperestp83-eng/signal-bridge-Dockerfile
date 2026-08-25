@@ -1,8 +1,11 @@
 const express = require('express');
 const { execFile } = require('child_process');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 
 const CONFIG_DIR = '/data/signal-cli-config';
 const PORT = process.env.PORT || 8080;
@@ -24,7 +27,6 @@ function rodarSignalCli(args) {
   });
 }
 
-// GET /status?phone=+numero  -> diz se a conta já está registrada
 app.get('/status', async (req, res) => {
   const { phone } = req.query;
   if (!phone) return res.status(400).json({ erro: 'phone é obrigatório' });
@@ -38,7 +40,6 @@ app.get('/status', async (req, res) => {
   }
 });
 
-// POST /register  { "phone": "+5511999999999", "captchaToken": "opcional" }
 app.post('/register', async (req, res) => {
   const { phone, captchaToken } = req.body;
   if (!phone) return res.status(400).json({ erro: 'phone é obrigatório' });
@@ -66,7 +67,6 @@ app.post('/register', async (req, res) => {
   }
 });
 
-// POST /verify  { "phone": "+5511999999999", "code": "123456" }
 app.post('/verify', async (req, res) => {
   const { phone, code } = req.body;
   if (!phone || !code) {
@@ -81,7 +81,6 @@ app.post('/verify', async (req, res) => {
   }
 });
 
-// POST /send  { "phone": "+remetente", "to": "+destino", "message": "texto" }
 app.post('/send', async (req, res) => {
   const { phone, to, message } = req.body;
   if (!phone || !to || !message) {
@@ -96,7 +95,6 @@ app.post('/send', async (req, res) => {
   }
 });
 
-// GET /receive?phone=+numero
 app.get('/receive', async (req, res) => {
   const { phone } = req.query;
   if (!phone) return res.status(400).json({ erro: 'phone é obrigatório' });
@@ -105,6 +103,36 @@ app.get('/receive', async (req, res) => {
     const resultado = await rodarSignalCli(['-a', phone, 'receive', '--json']);
     res.json({ sucesso: true, mensagens: resultado.stdout });
   } catch (e) {
+    res.status(422).json({ sucesso: false, erro: e.stderr || e.error });
+  }
+});
+
+// POST /updateProfile  { "phone": "+numero", "name": "opcional", "about": "opcional", "avatarBase64": "opcional" }
+app.post('/updateProfile', async (req, res) => {
+  const { phone, name, about, avatarBase64 } = req.body;
+  if (!phone) return res.status(400).json({ erro: 'phone é obrigatório' });
+
+  const args = ['-a', phone, 'updateProfile'];
+  if (name) args.push('--given-name', name);
+  if (about) args.push('--about', about);
+
+  let avatarPath;
+  if (avatarBase64) {
+    avatarPath = path.join(os.tmpdir(), `avatar_${Date.now()}.jpg`);
+    fs.writeFileSync(avatarPath, Buffer.from(avatarBase64, 'base64'));
+    args.push('--avatar', avatarPath);
+  }
+
+  try {
+    const resultado = await rodarSignalCli(args);
+    if (avatarPath) fs.unlinkSync(avatarPath);
+    res.json({ sucesso: true, detalhe: resultado.stdout || resultado.stderr });
+  } catch (e) {
+    if (avatarPath) {
+      try {
+        fs.unlinkSync(avatarPath);
+      } catch (_) {}
+    }
     res.status(422).json({ sucesso: false, erro: e.stderr || e.error });
   }
 });
