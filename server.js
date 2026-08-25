@@ -137,6 +137,60 @@ app.post('/updateProfile', async (req, res) => {
   }
 });
 
+// ===================== STORIES =====================
+//
+// signal-cli não tem (nas versões estáveis atuais) flags de "story de texto puro"
+// documentadas de forma consistente entre versões (--text-story-background-color etc.
+// mudou de nome/existência entre releases). Pra não depender de flags frágeis,
+// tratamos TODA story (com fundo colorido + texto OU com foto) como um "sendStory
+// de attachment": o Flutter renderiza o texto sobre o fundo/foto e manda o PNG
+// resultante já pronto. O bridge só recebe a imagem final e chama:
+//
+//   signal-cli -a <phone> sendStory -a <arquivo> [-g <groupId>]
+//
+// Sem -g, a story vai pra "My Story" (todos os contatos), conforme decidido.
+//
+// POST /uploadStory
+// body: {
+//   "phone": "+numero",          // obrigatório
+//   "imageBase64": "...",        // obrigatório, PNG/JPEG em base64 (sem o prefixo data:)
+//   "groupId": "opcional",       // se ausente -> My Story
+//   "mimeType": "image/png"      // opcional, default image/png
+// }
+app.post('/uploadStory', async (req, res) => {
+  const { phone, imageBase64, groupId, mimeType } = req.body;
+
+  if (!phone) return res.status(400).json({ erro: 'phone é obrigatório' });
+  if (!imageBase64) return res.status(400).json({ erro: 'imageBase64 é obrigatório' });
+
+  const extensao = mimeType === 'image/jpeg' ? 'jpg' : 'png';
+  const storyPath = path.join(os.tmpdir(), `story_${Date.now()}.${extensao}`);
+
+  try {
+    fs.writeFileSync(storyPath, Buffer.from(imageBase64, 'base64'));
+  } catch (e) {
+    return res.status(400).json({ erro: 'imageBase64 inválido', detalhe: e.message });
+  }
+
+  const args = ['-a', phone, 'sendStory', '-a', storyPath];
+  if (groupId) args.push('-g', groupId);
+
+  try {
+    const resultado = await rodarSignalCli(args);
+    res.json({
+      sucesso: true,
+      destino: groupId ? `grupo:${groupId}` : 'My Story',
+      detalhe: resultado.stdout || resultado.stderr,
+    });
+  } catch (e) {
+    res.status(422).json({ sucesso: false, erro: e.stderr || e.error });
+  } finally {
+    try {
+      fs.unlinkSync(storyPath);
+    } catch (_) {}
+  }
+});
+
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Bridge Server rodando na porta ${PORT}`);
 });
