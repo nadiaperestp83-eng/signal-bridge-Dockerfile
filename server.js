@@ -259,6 +259,71 @@ app.post('/getUserStatus', async (req, res) => {
   }
 });
 
+// POST /getUsersStatus  { "phone": "+numero_da_conta", "recipients": ["+55...", "+1...", ...] }
+//
+// Igual ao /getUserStatus, mas verifica VÁRIOS números numa chamada só.
+// Existe porque a tela "Nova mensagem" precisa cruzar a agenda inteira do
+// aparelho contra o Signal, e chamar /getUserStatus um número por vez
+// significa subir uma JVM do signal-cli pra cada contato — com uma agenda
+// de tamanho normal isso trava a tela por muito tempo. O comando
+// `getUserStatus` do signal-cli aceita múltiplos números como argumentos
+// e devolve um array JSON, então isso vira UMA chamada de processo pra um
+// lote inteiro.
+//
+// Limite de MAX_RECIPIENTS_POR_CHAMADA: por segurança de linha de comando
+// (evitar um payload gigante virando um argv absurdo). O cliente deve
+// quebrar agendas grandes em lotes menores e chamar esse endpoint várias
+// vezes em sequência (nunca em paralelo pro mesmo phone — o signal-cli usa
+// um lockfile de configuração por conta, chamadas concorrentes pra mesma
+// conta podem falhar).
+const MAX_RECIPIENTS_POR_CHAMADA = 100;
+
+app.post('/getUsersStatus', async (req, res) => {
+  const { phone, recipients } = req.body;
+
+  if (!phone) return res.status(400).json({ erro: 'phone é obrigatório' });
+  if (!Array.isArray(recipients) || recipients.length === 0) {
+    return res.status(400).json({ erro: 'recipients deve ser um array não vazio' });
+  }
+  if (recipients.length > MAX_RECIPIENTS_POR_CHAMADA) {
+    return res.status(400).json({
+      erro: `no máximo ${MAX_RECIPIENTS_POR_CHAMADA} números por chamada — quebre em lotes menores`,
+    });
+  }
+
+  try {
+    const resultado = await rodarSignalCli([
+      '-o', 'json',
+      '-a', phone,
+      'getUserStatus',
+      ...recipients,
+    ]);
+
+    let bruto;
+    try {
+      bruto = JSON.parse(resultado.stdout);
+    } catch (_) {
+      return res.status(502).json({
+        sucesso: false,
+        erro: 'signal-cli não retornou JSON válido pro lote',
+        detalheCru: resultado.stdout,
+      });
+    }
+
+    const lista = Array.isArray(bruto) ? bruto : [bruto];
+    const resultados = lista.map((item) => ({
+      numero: item.number,
+      registrado: item.isRegistered === true,
+      uuid: item.uuid ?? null,
+      username: item.username ?? null,
+    }));
+
+    res.json({ sucesso: true, resultados });
+  } catch (e) {
+    res.status(422).json({ sucesso: false, erro: e.stderr || e.error });
+  }
+});
+
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Bridge Server rodando na porta ${PORT}`);
 });
