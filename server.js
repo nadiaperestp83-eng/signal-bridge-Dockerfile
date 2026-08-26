@@ -4,8 +4,24 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
+// Sem isso, um erro não tratado derruba o processo Node inteiro no meio de
+// uma resposta — e o cliente vê exatamente "connection abort" sem nenhuma
+// pista do que houve. Com isso, pelo menos fica logado no Railway.
+process.on('uncaughtException', (erro) => {
+  console.error('[uncaughtException]', erro);
+});
+process.on('unhandledRejection', (erro) => {
+  console.error('[unhandledRejection]', erro);
+});
+
 const app = express();
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '20mb' }));
+
+app.use((req, res, next) => {
+  const tamanho = req.headers['content-length'];
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.path} content-length=${tamanho ?? '?'}`);
+  next();
+});
 
 const CONFIG_DIR = '/data/signal-cli-config';
 const PORT = process.env.PORT || 8080;
@@ -188,6 +204,28 @@ app.post('/uploadStory', async (req, res) => {
     try {
       fs.unlinkSync(storyPath);
     } catch (_) {}
+  }
+});
+
+// POST /addContact  { "phone": "+numero_da_conta", "recipient": "+numero_do_contato", "name": "opcional" }
+//
+// Usa `updateContact`: se o recipient ainda não existe na lista de contatos
+// dessa conta, ele é criado. É isso que faz "Meu status" (Todos os contatos
+// do Signal) ter alguém elegível pra receber a story.
+app.post('/addContact', async (req, res) => {
+  const { phone, recipient, name } = req.body;
+
+  if (!phone) return res.status(400).json({ erro: 'phone é obrigatório' });
+  if (!recipient) return res.status(400).json({ erro: 'recipient é obrigatório' });
+
+  const args = ['-a', phone, 'updateContact', recipient];
+  if (name) args.push('--given-name', name);
+
+  try {
+    const resultado = await rodarSignalCli(args);
+    res.json({ sucesso: true, detalhe: resultado.stdout || resultado.stderr });
+  } catch (e) {
+    res.status(422).json({ sucesso: false, erro: e.stderr || e.error });
   }
 });
 
