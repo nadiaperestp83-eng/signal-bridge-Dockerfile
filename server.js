@@ -229,6 +229,36 @@ app.post('/addContact', async (req, res) => {
   }
 });
 
+// POST /getUserStatus  { "phone": "+numero_da_conta", "recipient": "+numero_ou_username" }
+//
+// Usa `getUserStatus` (aceita número OU username) pra confirmar se existe
+// mesmo alguém registrado no Signal antes de abrir um chat. Com -o json
+// pra vir estruturado.
+app.post('/getUserStatus', async (req, res) => {
+  const { phone, recipient } = req.body;
+
+  if (!phone) return res.status(400).json({ erro: 'phone é obrigatório' });
+  if (!recipient) return res.status(400).json({ erro: 'recipient é obrigatório' });
+
+  try {
+    const resultado = await rodarSignalCli(['-o', 'json', '-a', phone, 'getUserStatus', recipient]);
+
+    let detalhe = null;
+    let registrado = false;
+    try {
+      const parsed = JSON.parse(resultado.stdout);
+      detalhe = Array.isArray(parsed) ? parsed[0] : parsed;
+      registrado = detalhe?.isRegistered === true;
+    } catch (_) {
+      // stdout não veio em JSON parseável — devolve cru pro cliente decidir.
+    }
+
+    res.json({ sucesso: true, registrado, detalhe: detalhe ?? resultado.stdout });
+  } catch (e) {
+    res.status(422).json({ sucesso: false, erro: e.stderr || e.error });
+  }
+});
+
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Bridge Server rodando na porta ${PORT}`);
 });
