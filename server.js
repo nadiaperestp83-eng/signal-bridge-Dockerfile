@@ -26,6 +26,11 @@ app.use((req, res, next) => {
 const CONFIG_DIR = '/data/signal-cli-config';
 const PORT = process.env.PORT || 8080;
 
+// Token pra proteger /backup — só quem souber esse valor consegue baixar
+// as chaves da conta Signal. Defina BRIDGE_BACKUP_TOKEN nas env vars do
+// Render com um valor aleatório grande (ex: gerado com `openssl rand -hex 32`).
+const BRIDGE_BACKUP_TOKEN = process.env.BRIDGE_BACKUP_TOKEN;
+
 function rodarSignalCli(args) {
   return new Promise((resolve, reject) => {
     execFile(
@@ -42,6 +47,12 @@ function rodarSignalCli(args) {
     );
   });
 }
+
+// Health-check leve — não toca no signal-cli, só confirma que o processo
+// Node está de pé. Usado pelo ping de keep-alive (pg_cron -> net.http_get).
+app.get('/health', (req, res) => {
+  res.json({ ok: true, time: new Date().toISOString() });
+});
 
 app.get('/status', async (req, res) => {
   const { phone } = req.query;
@@ -322,6 +333,44 @@ app.post('/getUsersStatus', async (req, res) => {
   } catch (e) {
     res.status(422).json({ sucesso: false, erro: e.stderr || e.error });
   }
+});
+
+// GET /backup?token=SEU_TOKEN
+//
+// Faz a mesma coisa que o backup-state.sh (tar + base64 do CONFIG_DIR),
+// mas via HTTP em vez de precisar entrar no shell do container. Pensado
+// pra ser chamado por uma Edge Function do Supabase periodicamente, que
+// guarda o resultado numa tabela — assim você nunca mais copia isso na mão.
+//
+// Protegido por token porque o conteúdo tem as chaves de identidade da
+// conta Signal (quem tiver esse base64 consegue "clonar" a conta).
+app.get('/backup', (req, res) => {
+  if (!BRIDGE_BACKUP_TOKEN) {
+    return res.status(500).json({ erro: 'BRIDGE_BACKUP_TOKEN não configurado no servidor' });
+  }
+  if (req.query.token !== BRIDGE_BACKUP_TOKEN) {
+    return res.status(401).json({ erro: 'token inválido' });
+  }
+
+  if (!fs.existsSync(CONFIG_DIR) || fs.readdirSync(CONFIG_DIR).length === 0) {
+    return res.status(404).json({ erro: `Nada pra exportar: ${CONFIG_DIR} está vazio (já registrou alguma conta?)` });
+  }
+
+  const tarPath = path.join(os.tmpdir(), `state_${Date.now()}.tar.gz`);
+
+  execFile('tar', ['czf', tarPath, '-C', CONFIG_DIR, '.'], { timeout: 30000 }, (error) => {
+    if (error) {
+      return res.status(500).json({ erro: 'falha ao gerar backup', detalhe: error.message });
+    }
+
+    try {
+      const base64 = fs.readFileSync(tarPath).toString('base64');
+      fs.unlinkSync(tarPath);
+      res.json({ sucesso: true, estadoBase64: base64 });
+    } catch (e) {
+      res.status(500).json({ erro: 'falha ao ler/limpar backup', detalhe: e.message });
+    }
+  });
 });
 
 app.listen(PORT, '0.0.0.0', () => {
