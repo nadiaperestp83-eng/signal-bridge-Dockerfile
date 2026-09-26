@@ -6,7 +6,7 @@ const path = require('path');
 
 // Sem isso, um erro não tratado derruba o processo Node inteiro no meio de
 // uma resposta — e o cliente vê exatamente "connection abort" sem nenhuma
-// pista do que houve. Com isso, pelo menos fica logado no Railway.
+// pista do que houve. Com isso, pelo menos fica logado no Render.
 process.on('uncaughtException', (erro) => {
   console.error('[uncaughtException]', erro);
 });
@@ -49,7 +49,7 @@ function rodarSignalCli(args) {
 }
 
 // Health-check leve — não toca no signal-cli, só confirma que o processo
-// Node está de pé. Usado pelo ping de keep-alive (pg_cron -> net.http_get).
+// Node está de pé.
 app.get('/health', (req, res) => {
   res.json({ ok: true, time: new Date().toISOString() });
 });
@@ -134,7 +134,6 @@ app.get('/receive', async (req, res) => {
   }
 });
 
-// POST /updateProfile  { "phone": "+numero", "name": "opcional", "about": "opcional", "avatarBase64": "opcional" }
 app.post('/updateProfile', async (req, res) => {
   const { phone, name, about, avatarBase64 } = req.body;
   if (!phone) return res.status(400).json({ erro: 'phone é obrigatório' });
@@ -165,25 +164,6 @@ app.post('/updateProfile', async (req, res) => {
 });
 
 // ===================== STORIES =====================
-//
-// signal-cli não tem (nas versões estáveis atuais) flags de "story de texto puro"
-// documentadas de forma consistente entre versões (--text-story-background-color etc.
-// mudou de nome/existência entre releases). Pra não depender de flags frágeis,
-// tratamos TODA story (com fundo colorido + texto OU com foto) como um "sendStory
-// de attachment": o Flutter renderiza o texto sobre o fundo/foto e manda o PNG
-// resultante já pronto. O bridge só recebe a imagem final e chama:
-//
-//   signal-cli -a <phone> sendStory -a <arquivo> [-g <groupId>]
-//
-// Sem -g, a story vai pra "My Story" (todos os contatos), conforme decidido.
-//
-// POST /uploadStory
-// body: {
-//   "phone": "+numero",          // obrigatório
-//   "imageBase64": "...",        // obrigatório, PNG/JPEG em base64 (sem o prefixo data:)
-//   "groupId": "opcional",       // se ausente -> My Story
-//   "mimeType": "image/png"      // opcional, default image/png
-// }
 app.post('/uploadStory', async (req, res) => {
   const { phone, imageBase64, groupId, mimeType } = req.body;
 
@@ -218,11 +198,6 @@ app.post('/uploadStory', async (req, res) => {
   }
 });
 
-// POST /addContact  { "phone": "+numero_da_conta", "recipient": "+numero_do_contato", "name": "opcional" }
-//
-// Usa `updateContact`: se o recipient ainda não existe na lista de contatos
-// dessa conta, ele é criado. É isso que faz "Meu status" (Todos os contatos
-// do Signal) ter alguém elegível pra receber a story.
 app.post('/addContact', async (req, res) => {
   const { phone, recipient, name } = req.body;
 
@@ -240,11 +215,6 @@ app.post('/addContact', async (req, res) => {
   }
 });
 
-// POST /getUserStatus  { "phone": "+numero_da_conta", "recipient": "+numero_ou_username" }
-//
-// Usa `getUserStatus` (aceita número OU username) pra confirmar se existe
-// mesmo alguém registrado no Signal antes de abrir um chat. Com -o json
-// pra vir estruturado.
 app.post('/getUserStatus', async (req, res) => {
   const { phone, recipient } = req.body;
 
@@ -260,9 +230,7 @@ app.post('/getUserStatus', async (req, res) => {
       const parsed = JSON.parse(resultado.stdout);
       detalhe = Array.isArray(parsed) ? parsed[0] : parsed;
       registrado = detalhe?.isRegistered === true;
-    } catch (_) {
-      // stdout não veio em JSON parseável — devolve cru pro cliente decidir.
-    }
+    } catch (_) {}
 
     res.json({ sucesso: true, registrado, detalhe: detalhe ?? resultado.stdout });
   } catch (e) {
@@ -270,23 +238,6 @@ app.post('/getUserStatus', async (req, res) => {
   }
 });
 
-// POST /getUsersStatus  { "phone": "+numero_da_conta", "recipients": ["+55...", "+1...", ...] }
-//
-// Igual ao /getUserStatus, mas verifica VÁRIOS números numa chamada só.
-// Existe porque a tela "Nova mensagem" precisa cruzar a agenda inteira do
-// aparelho contra o Signal, e chamar /getUserStatus um número por vez
-// significa subir uma JVM do signal-cli pra cada contato — com uma agenda
-// de tamanho normal isso trava a tela por muito tempo. O comando
-// `getUserStatus` do signal-cli aceita múltiplos números como argumentos
-// e devolve um array JSON, então isso vira UMA chamada de processo pra um
-// lote inteiro.
-//
-// Limite de MAX_RECIPIENTS_POR_CHAMADA: por segurança de linha de comando
-// (evitar um payload gigante virando um argv absurdo). O cliente deve
-// quebrar agendas grandes em lotes menores e chamar esse endpoint várias
-// vezes em sequência (nunca em paralelo pro mesmo phone — o signal-cli usa
-// um lockfile de configuração por conta, chamadas concorrentes pra mesma
-// conta podem falhar).
 const MAX_RECIPIENTS_POR_CHAMADA = 100;
 
 app.post('/getUsersStatus', async (req, res) => {
@@ -335,15 +286,6 @@ app.post('/getUsersStatus', async (req, res) => {
   }
 });
 
-// GET /backup?token=SEU_TOKEN
-//
-// Faz a mesma coisa que o backup-state.sh (tar + base64 do CONFIG_DIR),
-// mas via HTTP em vez de precisar entrar no shell do container. Pensado
-// pra ser chamado por uma Edge Function do Supabase periodicamente, que
-// guarda o resultado numa tabela — assim você nunca mais copia isso na mão.
-//
-// Protegido por token porque o conteúdo tem as chaves de identidade da
-// conta Signal (quem tiver esse base64 consegue "clonar" a conta).
 app.get('/backup', (req, res) => {
   if (!BRIDGE_BACKUP_TOKEN) {
     return res.status(500).json({ erro: 'BRIDGE_BACKUP_TOKEN não configurado no servidor' });
@@ -353,7 +295,7 @@ app.get('/backup', (req, res) => {
   }
 
   if (!fs.existsSync(CONFIG_DIR) || fs.readdirSync(CONFIG_DIR).length === 0) {
-    return res.status(404).json({ erro: `Nada pra exportar: ${CONFIG_DIR} está vazio (já registrou alguma conta?)` });
+    return res.status(404).json({ erro: `Nada pra exportar: ${CONFIG_DIR} está vazio` });
   }
 
   const tarPath = path.join(os.tmpdir(), `state_${Date.now()}.tar.gz`);
